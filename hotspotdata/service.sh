@@ -2,9 +2,9 @@
 # 热点省电 (Hotspot Power Saver) -- the background half of the hotspotdata info
 # screen app (its id, settings, files and log tag keep the name hotspotdata).
 #
-#   hotspot turned off -> mobile data down (after off_delay minutes), and with
-#                         mode "radio" the data card's radio off as well
-#   hotspot turned on  -> the radio back on, mobile data up
+#   USB disconnected -> mobile data down (after off_delay), the hotspot off, and
+#                       with mode "radio" the data card's radio off as well
+#   USB connected    -> the hotspot back on, the radio back on, mobile data up
 #   and with perf_low, the CPU and GPU at their lowest clocks while it is off
 #   (cores: CPU cores offline as well; boost_screen: not while the screen is lit)
 #   and with bt_off, Bluetooth off; with idle_off, the hotspot itself turned off
@@ -89,6 +89,16 @@ hotspot_on() {
 	radio=$(uci -q get "wireless.$ap.device")
 	[ "$(uci -q get "wireless.$ap.disabled")" != 1 ] &&
 		[ "$(uci -q get "wireless.$radio.disabled")" != 1 ]
+}
+
+# USB 供电判据（USB fence）：任一电源源 online=1 即"在用"，替代原热点开关触发。
+# 拔线（无 USB 供电）= 闲置 -> 省电；插线 = 在用 -> 恢复。
+usb_connected() {
+	local p v
+	for p in ac usb aw322xx_charger; do
+		read v < "/sys/class/power_supply/$p/online" 2>/dev/null && [ "$v" = 1 ] && return 0
+	done
+	return 1
 }
 
 enabled() { [ "$(uci -q get "$CFG.settings.enabled")" != 0 ]; }
@@ -1002,24 +1012,22 @@ full_pass() {
 	else
 		m=$(mode)
 		if [ "$m" = data ]; then set_keep_radio 1; else set_keep_radio 0; fi
-		if hotspot_on; then
+		if usb_connected; then
 			if [ "$state" != on ]; then
-				# (full speed first: the hotspot is about to carry traffic)
+				# (full speed first: the device is being used)
 				cores_on
 				perf_restore
 				rm -f "$BOOSTED"
 				data_on
+				[ "$(hotspot_on)" = 1 ] || "$HOTSPOT_SWITCH" on >/dev/null 2>&1 || log "the hotspot switch failed"
 				bt_on
 				state=on
 				offed=0
 				lost_since=0
 				watch_next=$(($(uptime_s) + RADIO_RETRY))
-				idle_since=$NOW
-				idle_next=$((NOW + IDLE_CHECK))
 			fi
 			watch_on
 			wifi_watch
-			idle_check
 		else
 			if [ "$state" != off ]; then
 				off_since=$(uptime_s)
@@ -1033,6 +1041,8 @@ full_pass() {
 			# a mode change while off is looked at now
 			[ -n "$radio_done" ] && [ "$radio_done" != "$m" ] && radio_next=0
 			if [ $(($(uptime_s) - off_since)) -ge "$(off_delay)" ]; then
+				# 拔线确认：先关热点（深度休眠需要 ap_up 满足），再断数据/射频/降频/关核/关蓝牙
+				[ "$(hotspot_on)" != 1 ] || "$HOTSPOT_SWITCH" off >/dev/null 2>&1 || log "the hotspot switch failed"
 				data_off
 				radio_apply "$m"
 				if [ -f "$PAUSED" ]; then
