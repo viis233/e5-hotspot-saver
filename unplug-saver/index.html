@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<style>
+	html, body { margin: 0; background: #0b0e13; color: #e8ecf2;
+		font-family: "Noto Sans CJK SC", "DejaVu Sans", sans-serif; user-select: none; cursor: none; }
+	body { padding: 8px; }
+	.card { background: #161b23; border-radius: 10px; padding: 9px 11px; margin-bottom: 7px; }
+	.row { display: flex; justify-content: space-between; align-items: baseline; }
+	.row + .row { margin-top: 6px; }
+	.sub { color: #8b95a5; font-size: 12px; line-height: 1.5; }
+	.val { font-weight: bold; }
+	.good { color: #3ccf7a; } .fair { color: #f2c14b; } .off { color: #8b95a5; } .poor { color: #f0625a; }
+	button { font: inherit; color: #e8ecf2; background: #232a35; border: 0; border-radius: 8px;
+		padding: 9px; width: 100%; outline: none; }
+	button:focus { box-shadow: 0 0 0 2px #fff; }
+</style>
+</head>
+<body>
+<div class="card" id="state"></div>
+<button id="toggle"></button>
+<button id="sleep" style="margin-top:7px"></button>
+<div class="sub" id="note" style="margin-top:7px"></div>
+<script src="/sdk/e5.js"></script>
+<script>
+'use strict';
+// 拔线省电 (the unplug-saver app): the saving runs in the background service;
+// this page shows it and turns it on and off.  Settings: 高级 -> 拔线省电.
+const $ = (id) => document.getElementById(id);
+let st = null, busy = false, loadError = null;
+
+// deep sleep: why the system stays awake, and what woke it last (sleep.sh)
+const WHY = {
+	screen: { zh: '屏幕亮着', en: 'screen lit' }, delay: { zh: '刚熄屏', en: 'just dark' },
+	power: { zh: '插着 USB / 充电', en: 'on USB / charging' }, hotspot: { zh: '热点开着', en: 'hotspot on' },
+	radio: { zh: '射频开着', en: 'radio on' }, audio: { zh: '声音播放中', en: 'audio in use' },
+	wakelock: { zh: '唤醒锁', en: 'wake lock' }, backoff: { zh: '频繁唤醒，暂缓', en: 'woken too often' },
+	grace: { zh: '刚被唤醒', en: 'just woken' }, kernel: { zh: '内核忙', en: 'kernel busy' },
+	disabled: { zh: '已关闭', en: 'off' }, sdcard: { zh: '系统在 SD 卡上，暂不支持', en: 'not on an SD card install yet' }
+};
+const BY = {
+	key: { zh: '按键', en: 'key' }, rtc: { zh: '定时', en: 'timer' }, power: { zh: '充电器', en: 'charger' },
+	modem: { zh: '基带', en: 'modem' }, wcn: { zh: 'Wi-Fi/蓝牙', en: 'Wi-Fi/BT' }, other: { zh: '其他', en: 'other' },
+	fgu: { zh: '电量计校准', en: 'fuel gauge calibration' },
+	unknown: { zh: '未知', en: 'unknown' }
+};
+
+function sleepRow(z) {
+	if (!z) return '';
+	const now = !z.on ? [e5.t({ zh: '关闭', en: 'Off' }), 'off']
+		: !z.deep ? [e5.t({ zh: '内核不支持', en: 'Not supported' }), 'poor']
+		: z.state == 'asleep' ? [e5.t({ zh: '休眠中', en: 'Asleep' }), 'good']
+		: [e5.t({ zh: '清醒 · ', en: 'Awake · ' }) + e5.t(WHY[z.why] ?? { zh: esc(z.why ?? '--'), en: esc(z.why ?? '--') }),
+			z.why == 'backoff' ? 'fair' : 'off'];
+	const pct = z.wall > 0 ? Math.round(100 * z.slept / z.wall) : 0;
+	const last = z.last_by ? e5.t({ zh: `上次睡 ${z.last_slept} 秒，${e5.t(BY[z.last_by] ?? BY.other)}唤醒`,
+		en: `last ${z.last_slept} s, woken by ${e5.t(BY[z.last_by] ?? BY.other)}` }) : '';
+	return row(e5.t({ zh: '深度休眠', en: 'Deep sleep' }), now[0], now[1]) +
+		(z.sleeps > 0 ? `<div class="sub" style="text-align:right">${e5.t({ zh: `已休眠 ${z.sleeps} 次，占 ${pct}%`, en: `${z.sleeps} sleeps, ${pct}% of the time` })}${last ? ' · ' + last : ''}</div>` : '');
+}
+
+function esc(s) {
+	return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function row(label, text, cls) {
+	return `<div class="row"><span>${label}</span><span class="val ${cls}">${text}</span></div>`;
+}
+
+function draw() {
+	if (!st) {
+		// (a backend that fails says why, instead of loading for ever)
+		$('state').innerHTML = loadError
+			? `<div class="sub poor">${e5.t({ zh: '读取失败：', en: 'Cannot load: ' })}${esc(loadError)}</div>`
+			: `<div class="sub">${e5.t({ zh: '读取中…', en: 'Loading…' })}</div>`;
+		return;
+	}
+	const h = st.hotspot, d = st.data;
+	const data = d.up ? [e5.t({ zh: '已连接', en: 'Connected' }), 'good']
+		: d.pending ? [e5.t({ zh: '连接中', en: 'Connecting' }), 'fair']
+		: [e5.t({ zh: '已断开', en: 'Off' }), 'off'];
+	// The card's radio as the AT owner reads it (the status bar's source);
+	// ModemManager's state only while that reading is unavailable: its
+	// "disabled" does not mean the radio is off on this modem.
+	const r = st.radio ?? {}, m = st.modem;
+	const sim = r.card == null ? '' : ` · SIM ${r.card + 1}`;
+	const cell = r.known
+		? (r.off ? [e5.t({ zh: '射频已关闭', en: 'Radio off' }) + sim +
+				(r.paused ? e5.t({ zh: ' · 轮询暂停', en: ' · polling paused' }) : ''), 'off']
+			: [[r.operator, r.label].filter(Boolean).map(esc).join(' ') || e5.t({ zh: '射频开启', en: 'Radio on' }), 'good'])
+		: m == null ? [e5.t({ zh: '无基带', en: 'No modem' }), 'poor']
+		: [e5.t({ zh: '读取中', en: 'Reading' }) + ` (MM ${esc(m)})`, 'fair'];
+	$('state').innerHTML =
+		row(e5.t({ zh: '省电', en: 'Saving' }),
+			st.enabled ? e5.t({ zh: '开启', en: 'On' }) : e5.t({ zh: '关闭', en: 'Off' }), st.enabled ? 'good' : 'off') +
+		row(e5.t({ zh: '热点', en: 'Hotspot' }),
+			!h.available ? e5.t({ zh: '未配置', en: 'None' }) : h.on ? e5.t({ zh: '开启', en: 'On' }) : e5.t({ zh: '关闭', en: 'Off' }),
+			h.on ? 'good' : 'off') +
+		row(e5.t({ zh: '移动数据', en: 'Mobile data' }), data[0], data[1]) +
+		row(e5.t({ zh: '蜂窝', en: 'Cellular' }), cell[0], cell[1]) +
+		row(e5.t({ zh: 'CPU / GPU', en: 'CPU / GPU' }),
+			st.boosted ? e5.t({ zh: '屏幕亮着，临时全速', en: 'Full speed, screen lit' })
+				: st.perf_low ? e5.t({ zh: '锁最低频率', en: 'Lowest clocks' }) : e5.t({ zh: '正常', en: 'Normal' }),
+			st.perf_low ? 'off' : 'good') +
+		row(e5.t({ zh: '蓝牙', en: 'Bluetooth' }),
+			st.bt_off ? e5.t({ zh: '已随拔线关闭', en: 'Off when unplugged' }) : e5.t({ zh: '未改动', en: 'Untouched' }),
+			st.bt_off ? 'off' : 'good') +
+		row(e5.t({ zh: '熄屏刷新', en: 'Dark refresh' }),
+			st.blank_poll ? e5.t({ zh: `每 ${st.blank_poll / 1000} 秒`, en: `every ${st.blank_poll / 1000} s` })
+				: e5.t({ zh: '每 5 秒（原样）', en: 'every 5 s' }), st.blank_poll ? 'off' : 'good') +
+		row(e5.t({ zh: 'CPU 核心', en: 'CPU cores' }),
+			(st.cpu_off?.length ? e5.t({ zh: `CPU 设置关闭 ${st.cpu_off.join(' ')}`, en: `${st.cpu_off.join(' ')} OFF in CPU settings` }) + ' · ' : '') +
+			(st.cores_off > 0 ? e5.t({ zh: `已关 ${st.cores_off} 个`, en: `${st.cores_off} off` }) + ' · ' : '') +
+			e5.t({ zh: '在线 ', en: 'online ' }) + esc(st.cores_online ?? '--'),
+			st.cores_off > 0 || st.cpu_off?.length ? 'off' : 'good') +
+		sleepRow(st.sleep) +
+		row(e5.t({ zh: '后台服务', en: 'Service' }),
+			st.service ? e5.t({ zh: '运行中', en: 'Running' }) : e5.t({ zh: '未运行', en: 'Stopped' }), st.service ? 'good' : 'poor');
+	$('sleep').textContent = st.sleep?.on ? e5.t({ zh: '关闭深度休眠', en: 'Turn deep sleep off' })
+		: e5.t({ zh: '开启深度休眠', en: 'Turn deep sleep on' });
+	$('toggle').textContent = st.enabled ? e5.t({ zh: '关闭省电', en: 'Turn saving off' })
+		: e5.t({ zh: '开启省电', en: 'Turn saving on' });
+	const what = st.mode == 'radio'
+		? e5.t({ zh: '关闭蜂窝（收不到短信电话）', en: 'cellular goes off (no SMS or calls)' })
+		: e5.t({ zh: '断开数据（短信电话正常）', en: 'data goes off (SMS and calls work)' });
+	const when = st.off_delay > 0
+		? e5.t({ zh: `拔线 ${st.off_delay} 分钟后`, en: `${st.off_delay} min after an unplug, ` })
+		: e5.t({ zh: '拔线后立即', en: 'When unplugged, ' });
+	$('note').textContent = st.enabled
+		? when + what + e5.t({ zh: '；插线时自动恢复。', en: '; plugging it back in brings it all back. ' }) +
+			(st.sleep?.on ? e5.t({ zh: `射频关闭后，熄屏 ${st.sleep.delay} 秒进入深度休眠（未插 USB 时），按任意键唤醒。`,
+				en: `With the radio off, it deep-sleeps ${st.sleep.delay} s after the screen goes dark (not on USB); any key wakes it. ` }) : '') +
+			e5.t({ zh: '各项设置在 高级 → 拔线省电。', en: 'Settings: Advanced -> Unplug Power Saver.' })
+		: e5.t({ zh: '省电已关闭，拔线后一切照常。', en: 'Saving is off: nothing changes when unplugged.' });
+}
+
+async function load() {
+	try { st = await e5.api('/status'); loadError = null; }
+	catch (e) { loadError = e.message || String(e); if (st) e5.toast(loadError); }
+	draw();
+}
+
+async function toggle() {
+	if (busy || !st) return;
+	busy = true;
+	try { st = await e5.api('/enabled', { body: { on: !st.enabled } }); }
+	catch (e) { e5.toast(e.message); }
+	busy = false;
+	draw();
+}
+
+e5.onKey((k) => {
+	if (k.kind == 'ok') { toggle(); return true; }
+	return false;
+});
+$('toggle').addEventListener('click', toggle);
+$('sleep').addEventListener('click', async () => {
+	if (busy || !st?.sleep) return;
+	busy = true;
+	try { st = await e5.api('/sleep', { body: { on: !st.sleep.on } }); }
+	catch (e) { e5.toast(e.message); }
+	busy = false;
+	draw();
+});
+draw();
+load();
+setInterval(load, 3000);
+</script>
+</body>
+</html>
