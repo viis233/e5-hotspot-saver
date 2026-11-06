@@ -1,0 +1,102 @@
+{
+	"id": "unplug-saver",
+	"api_version": 2,
+	"version": "3.5",
+	"name": { "zh": "拔线省电", "en": "Unplug Power Saver" },
+	"description": { "zh": "拔线时关热点、关射频、降频、关核心、关蓝牙，熄屏后深度休眠，插线恢复；CPU 设置可关闭核心（OFF，小核可保留 1/2/4 个）；USB 可关闭（仅充电，或连充电也关闭并可插线深度休眠）", "en": "Radio, CPU and Bluetooth off while unplugged, and deep sleep with the screen dark; OFF for CPU cores in CPU settings; USB can be turned off (charge only, or no charging either and deep sleep plugged in)" },
+	"entry": "index.html",
+	"order": 40,
+	"notifications": true,
+	"settings": [
+		{
+			"id": "enabled", "type": "toggle", "uci": "e5-plugin-unplug-saver.settings.enabled", "default": "1",
+			"label": { "zh": "启用拔线省电", "en": "Unplug power saving" }
+		},
+		{
+			"id": "mode", "type": "choice", "uci": "e5-plugin-unplug-saver.settings.mode", "default": "radio",
+			"label": { "zh": "拔线时", "en": "While unplugged" },
+			"options": [
+				{ "value": "radio", "label": { "zh": "关闭蜂窝（最省电，收不到短信电话）", "en": "Cellular off (least power, no SMS or calls)" } },
+				{ "value": "data", "label": { "zh": "只断数据（短信电话正常）", "en": "Data off only (SMS and calls work)" } }
+			]
+		},
+		{
+			"id": "pause_sim_status", "type": "toggle", "uci": "e5-plugin-unplug-saver.settings.pause_sim_status", "default": "1",
+			"label": { "zh": "射频关闭时暂停 SIM 状态轮询", "en": "Pause SIM polling while radio is off" },
+			"note": { "zh": "更省电；期间状态栏不显示运营商", "en": "Saves power; no operator in the status bar meanwhile" }
+		},
+		{
+			"id": "perf_low", "type": "toggle", "uci": "e5-plugin-unplug-saver.settings.perf_low", "default": "1",
+			"label": { "zh": "拔线时 CPU / GPU 锁最低频率", "en": "Lowest CPU / GPU clocks while unplugged" },
+			"note": { "zh": "插线时恢复；期间屏幕操作会变慢", "en": "Restored when plugged; the screen is slower meanwhile" }
+		},
+		{
+			"id": "cores", "type": "choice", "uci": "e5-plugin-unplug-saver.settings.cores", "default": "little",
+			"label": { "zh": "拔线时关闭 CPU 核心", "en": "CPU cores while unplugged" },
+			"note": { "zh": "插线时全部恢复；若关核心导致死机，下次开机自动改回全部保留", "en": "All back when plugged; a crash turns this off at the next boot" },
+			"options": [
+				{ "value": "little", "label": { "zh": "只留小核", "en": "Little cores only" } },
+				{ "value": "two", "label": { "zh": "只留 2 个小核", "en": "Two little cores" } },
+				{ "value": "all", "label": { "zh": "全部保留", "en": "Keep all" } }
+			]
+		},
+		{
+			"id": "boost_screen", "type": "toggle", "uci": "e5-plugin-unplug-saver.settings.boost_screen", "default": "1",
+			"label": { "zh": "屏幕亮着时临时恢复全速", "en": "Full speed while the screen is lit" },
+			"note": { "zh": "亮屏 1 秒内放开核心和频率，熄屏 5 秒后恢复限制", "en": "Cores and clocks back within 1 s; limits again 5 s after it goes dark" }
+		},
+		{
+			"id": "dark_watch", "type": "toggle", "uci": "e5-plugin-unplug-saver.settings.dark_watch", "default": "1",
+			"label": { "zh": "熄屏时暂停屏幕电源监视", "en": "Pause the screen power watcher while dark" },
+			"note": { "zh": "熄屏 5 秒后暂停每秒 10 次的背光检查，亮屏后恢复", "en": "Its 10 checks a second stop 5 s after the screen goes dark, and go on when it lights" }
+		},
+		{
+			"id": "bt_off", "type": "toggle", "uci": "e5-plugin-unplug-saver.settings.bt_off", "default": "1",
+			"label": { "zh": "拔线时关闭蓝牙", "en": "Bluetooth off while unplugged" },
+			"note": { "zh": "有蓝牙设备连着时不关；插线时恢复", "en": "Not while a device is connected; back when plugged" }
+		},
+		{
+			"id": "sleep", "type": "toggle", "uci": "e5-plugin-unplug-saver.settings.sleep", "default": "1",
+			"label": { "zh": "拔线后深度休眠", "en": "Deep sleep while unplugged" },
+			"note": { "zh": "熄屏后系统真正休眠，按键、充电器、基带唤醒；插着 USB 或充电时不休眠；系统装在 SD 卡上时暂不休眠", "en": "The system suspends with the screen dark; keys, the charger and the modem wake it. Never on USB or while charging, and not yet with the system on an SD card" }
+		},
+		{
+			"id": "sleep_delay", "type": "number", "uci": "e5-plugin-unplug-saver.settings.sleep_delay", "default": "30",
+			"min": 5, "max": 600, "step": 5, "unit": "s",
+			"label": { "zh": "熄屏后多久开始休眠（秒）", "en": "Sleep after the screen is dark for (s)" }
+		},
+		{
+			"id": "sleep_radio_on", "type": "toggle", "uci": "e5-plugin-unplug-saver.settings.sleep_radio_on", "default": "0",
+			"label": { "zh": "蜂窝射频开着时也休眠", "en": "Deep sleep with the cellular radio on too" },
+			"note": { "zh": "默认只在射频关闭后休眠（拔线时：关闭蜂窝）；射频开着时基带每隔几秒唤醒一次，反复醒睡可能比不睡更费电", "en": "By default only with the radio off (mode: cellular off): with it on, the modem wakes the system every few seconds" }
+		},
+		{
+			"id": "sleep_grace", "type": "number", "uci": "e5-plugin-unplug-saver.settings.sleep_grace", "default": "5",
+			"min": 2, "max": 60, "step": 1, "unit": "s",
+			"label": { "zh": "唤醒后保持清醒（秒）", "en": "Stay awake after a wake (s)" },
+			"note": { "zh": "基带唤醒（短信、来电）时至少 15 秒", "en": "At least 15 s after a modem wake (SMS, call)" }
+		},
+		{
+			"id": "sleep_wake_every", "type": "number", "uci": "e5-plugin-unplug-saver.settings.sleep_wake_every", "default": "0",
+			"min": 0, "max": 240, "step": 5, "unit": "min",
+			"label": { "zh": "休眠时定时唤醒（分钟）", "en": "Wake from deep sleep every (min)" },
+			"note": { "zh": "0 为不定时唤醒", "en": "0: never on a timer" }
+		},
+		{
+			"id": "blank_poll", "type": "choice", "uci": "e5-plugin-unplug-saver.settings.blank_poll", "default": "60",
+			"label": { "zh": "拔线且射频关闭时熄屏刷新间隔", "en": "Dark-screen refresh while unplugged and the radio off" },
+			"options": [
+				{ "value": "5", "label": { "zh": "5 秒（原样）", "en": "5 s (unchanged)" } },
+				{ "value": "30", "label": { "zh": "30 秒", "en": "30 s" } },
+				{ "value": "60", "label": { "zh": "1 分钟", "en": "1 min" } },
+				{ "value": "300", "label": { "zh": "5 分钟", "en": "5 min" } }
+			]
+		},
+		{
+			"id": "off_delay", "type": "number", "uci": "e5-plugin-unplug-saver.settings.off_delay", "default": "5",
+			"min": 0, "max": 30, "step": 1, "unit": "min",
+			"label": { "zh": "拔线后延迟断开（分钟）", "en": "Delay after unplug (min)" },
+			"note": { "zh": "0 为立即；防误拔", "en": "0: immediately; guards a replug" }
+		}
+	]
+}
