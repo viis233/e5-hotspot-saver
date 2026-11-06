@@ -325,7 +325,7 @@ return function(ctx) {
 	// USB 供电判据（USB fence）：任一电源源 online=1 即"在用"；拔线 -> 省电
 	function usb_connected() {
 		let v = '';
-		for (let p of ['ac', 'usb', 'aw322xx_charger']) {
+		for (let p in ['ac', 'usb', 'aw322xx_charger']) {
 			v = trim(readfile(`/sys/class/power_supply/${p}/online`) ?? '');
 			if (v == '1') return true;
 		}
