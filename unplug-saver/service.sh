@@ -972,7 +972,9 @@ full_pass() {
 				perf_restore
 				rm -f "$BOOSTED"
 				data_on
-				[ "$(hotspot_on)" = 1 ] || "$HOTSPOT_SWITCH" on >/dev/null 2>&1 || log "the hotspot switch failed"
+				if ! hotspot_on; then
+					"$HOTSPOT_SWITCH" on >/dev/null 2>&1 || log "the hotspot switch failed"
+				fi
 				bt_on
 				state=on
 				offed=0
@@ -995,7 +997,9 @@ full_pass() {
 			[ -n "$radio_done" ] && [ "$radio_done" != "$m" ] && radio_next=0
 			if [ $(($(uptime_s) - off_since)) -ge "$(off_delay)" ]; then
 				# 拔线确认：先关热点（深度休眠需要 ap_up 满足），再断数据/射频/降频/关核/关蓝牙
-				[ "$(hotspot_on)" != 1 ] || "$HOTSPOT_SWITCH" off >/dev/null 2>&1 || log "the hotspot switch failed"
+				if hotspot_on; then
+					"$HOTSPOT_SWITCH" off >/dev/null 2>&1 || log "the hotspot switch failed"
+				fi
 				data_off
 				radio_apply "$m"
 				if [ -f "$PAUSED" ]; then
